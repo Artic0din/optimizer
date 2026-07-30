@@ -46,6 +46,13 @@ The maximum is a single value out of the horizon, which leaves one gap: a load s
   <img alt="Charging plan with attenuate_grid_peaks: the battery refill spread over the solar window and the feed-in held to a flat 1 kW plateau" src="docs/img/example-peak-light.png">
 </picture>
 
+A cap and a ramp limit say how high the grid profile may go, not when the batteries fill, and on a flat tariff nothing else decides it either. The peak strategies therefore hold the surplus back from the grid the same way `charge_before_export` does, so that a levelled day still charges first and exports afterwards. The weight is two orders below the ramp, so it only picks between schedules the levelling rates equal — where the two disagree, as on the feed-in side below, levelling keeps the last word.
+
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="docs/img/example-early-dark.svg">
+  <img alt="Energy charged into the batteries over two days for three strategies, before and after the early charge tie break: attenuate_demand_peaks moves its half charge point from hour 45 to hour 2, the other two are unchanged" src="docs/img/example-early-light.svg">
+</picture>
+
 ## How a request is solved
 
 One request is up to five solver runs under one wall clock, `OPTIMIZER_TIME_LIMIT` (10 s in production). Each stage keeps what the previous one found unless it can improve on it without spending money. The request log carries where the clock went (`stages`), which path was taken (`path`), what the tie break (`preferences`) and the continuity pass (`continuity`) did, and what the cost stage found (`cost_stage_value`) against what it could not rule out (`cost_stage_gap`, currency, zero when proven).
