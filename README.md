@@ -46,7 +46,7 @@ The maximum is a single value out of the horizon, which leaves one gap: a load s
   <img alt="Charging plan with attenuate_grid_peaks: the battery refill spread over the solar window and the feed-in held to a flat 1 kW plateau" src="docs/img/example-peak-light.png">
 </picture>
 
-A cap and a ramp limit say how high the grid profile may go, not when the batteries fill, and on a flat tariff nothing else decides it either. The peak strategies therefore hold the surplus back from the grid the same way `charge_before_export` does, so that a levelled day still charges first and exports afterwards. The weight is two orders below the ramp, so it only picks between schedules the levelling rates equal — where the two disagree, as on the feed-in side below, levelling keeps the last word.
+A cap and a ramp limit say how high the grid profile may go, not when the batteries fill, and on a flat tariff nothing else decides it either. The peak strategies therefore hold the surplus back from the grid the same way `charge_before_export` does, so that a levelled day still charges first and exports afterwards, and pull grid import forward for a battery that has no surplus to hold back. Both weights are two orders below the ramp, so they only pick between schedules the levelling rates equal — where the two disagree, as on the feed-in side below, levelling keeps the last word.
 
 <picture>
   <source media="(prefers-color-scheme: dark)" srcset="docs/img/example-early-dark.svg">
