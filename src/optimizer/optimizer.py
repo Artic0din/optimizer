@@ -1,6 +1,8 @@
 import os
 import re
 import shutil
+import signal
+import threading
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
@@ -11,6 +13,7 @@ from typing import Dict, List, Optional
 import numpy as np
 import pulp
 
+from .processes import solver_pids
 from .settings import OptimizerSettings
 
 
@@ -171,6 +174,12 @@ CONTINUITY_TIME_LIMIT = 1.0
 # Both bounded by the request deadline.
 CONTINUITY_SPLIT_TIME_LIMIT = 2.5
 CONTINUITY_TOLERANCE = 1e-5
+# wall clock past the candidate's -sec limit after which its cbc is killed. CBC checks the limit
+# in branch and bound but not reliably in presolve, the root LP and the cut loop, and on the
+# start-minimising candidate it ran 5 to 13 times over a 1 s limit in production (#194). A run
+# that ends normally finishes within a few tenths of the limit, so the margin only catches
+# those, and the incumbent is kept.
+CONTINUITY_KILL_MARGIN = 0.5
 
 # a cbc on PATH is preferred over the one pulp bundles, which is 2.10.3 built Dec 2019 and gets a
 # MIP start wrong on this model, see _solve_preferences. None falls back to the bundled binary, so
@@ -790,6 +799,32 @@ class Optimizer:
         return solver
 
     @contextmanager
+    def _hard_limit(self, seconds: float):
+        """Kill this process's cbc if the enclosed solve is still running after `seconds`.
+
+        PuLP waits on cbc without a timeout, so a solver that overruns its -sec limit holds the
+        request. Killing it makes PuLP raise PulpSolverError, which the caller handles. Without
+        procfs (a development machine) nothing is found and nothing is killed.
+        """
+        killed = threading.Event()
+
+        def kill():
+            for pid in solver_pids(os.getpid()):
+                try:
+                    os.kill(pid, signal.SIGKILL)
+                    killed.set()
+                except OSError:
+                    pass  # it finished on its own in the meantime
+
+        timer = threading.Timer(seconds, kill)
+        timer.daemon = True
+        timer.start()
+        try:
+            yield killed
+        finally:
+            timer.cancel()
+
+    @contextmanager
     def _timed(self, stage):
         """Add the wall clock of the enclosed block to stage_seconds.
 
@@ -1020,7 +1055,7 @@ class Optimizer:
                 if remaining <= 0:
                     self.continuity_stage = 'no time'
                     return
-            with self._timed('continuity'):
+            with self._timed('continuity'), self._hard_limit(remaining + CONTINUITY_KILL_MARGIN) as killed:
                 candidate.solve(self._solver(tmpdir, timeLimit=remaining))
             self.continuity_stage = 'MILP ' + pulp.LpStatus[candidate.status] + ' unused'
             if (candidate.sol_status not in (pulp.LpSolutionOptimal, pulp.LpSolutionIntegerFeasible)
@@ -1038,7 +1073,7 @@ class Optimizer:
             if improved:
                 self.continuity_stage = f'improved {sum(before)} to {sum(after)}'
         except pulp.PulpSolverError:
-            self.continuity_stage = 'solver error'
+            self.continuity_stage = 'killed at the limit' if killed.is_set() else 'solver error'
         finally:
             if not improved:
                 for var, value in solution.items():
