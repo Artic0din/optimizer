@@ -94,6 +94,9 @@ resource containerApp 'Microsoft.App/containerApps@2025-01-01' = {
             // one vCPU replica at the price of a worse schedule for a small share of them.
             { name: 'OPTIMIZER_TIME_LIMIT', value: '10' }
             { name: 'OPTIMIZER_NUM_THREADS', value: '1' }
+            // HiGHS in process: finds better schedules on the slow requests replayed from production
+            // and is interrupted past its limit with its incumbent, where CBC overran it (#194, #197)
+            { name: 'OPTIMIZER_SOLVER', value: 'highs' }
             // the dump threshold is the time limit, so this collects everything above 10 s now.
             // The file is ephemeral, a replica restart takes it with it.
             { name: 'OPTIMIZER_DUMP_SLOW_REQUESTS', value: '/tmp/slow-requests.jsonl' }
