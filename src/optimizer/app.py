@@ -44,6 +44,21 @@ def before_request_func():
 
 
 @app.before_request
+def refuse_blocked_clients():
+    """Turn away releases known to send requests the solver cannot serve, before the body is read
+    or a model is built. Registered after the auth check so an unauthenticated caller learns
+    nothing about the list.
+
+    Answered as 400 with the API's Error object rather than 426: evcc decodes the body for 400 and
+    500 only and logs the message, any other status reaches its log as a bare 'invalid status'.
+    """
+    blocked = [c.strip() for c in settings.blocked_clients.split(',') if c.strip()]
+    client = request.headers.get('User-Agent', '')
+    if client in blocked:
+        return jsonify({"message": f"{client} is no longer served, please upgrade evcc"}), 400
+
+
+@app.before_request
 def read_body():
     """Receive the body up front, timed, so the request log can tell a slow client from a slow
     solve (#193). The sync worker reads it from the socket itself, and the ingress streams it
@@ -66,30 +81,34 @@ def money(value):
 DUMP_GAP = 1.0
 
 
-def dump_slow_request(payload, elapsed, gap, status=None, subject=None):
+def dump_slow_request(payload, elapsed, gap, status=None, subject=None, client=None):
     """Persist requests worth replaying: those that exhausted the solver time limit, those the
-    cost stage left more than DUMP_GAP of money unproven on, and those the model rejects as
-    infeasible.
+    cost stage left more than DUMP_GAP of money unproven on, and those that came back without a
+    schedule: infeasible, or not solved within the stage caps.
 
     The elapsed time covers model building as well as solving, so a request that only exceeds
     the limit while building is caught too. That one is equally worth looking at.
 
     An infeasible model is contradictory input, not a slow solve: both stages refuse it within
     a few tenths of a second, and in production it is a handful of installations sending the same
-    request every 15 minutes. The dump carries the token subject so the account can be told.
+    request every 15 minutes. A Not Solved ran the probe and the cost stage to their caps, about
+    5 s, and still had no incumbent; nine of ten in production came from one installation sending
+    400 to 480 step horizons. Neither reaches the time limit, so neither was caught as slow. The
+    dump carries the token subject so the account can be told, and the client's User-Agent,
+    evcc/<version>, so a bad request can be tied to the release that built it.
     """
     path, limit = settings.dump_slow_requests, settings.time_limit
     slow = limit is not None and elapsed >= limit
     unproven = gap is not None and gap > DUMP_GAP
-    infeasible = status == 'Infeasible'
-    if not path or not (slow or unproven or infeasible):
+    unsolved = status not in (None, 'Optimal', 'Feasible')
+    if not path or not (slow or unproven or unsolved):
         return
 
     # one line per request, carrying the same "request" key as test_cases/*.json so a line
     # can be replayed by the existing harness
     line = json.dumps({"ts": datetime.now(timezone.utc).isoformat(timespec="seconds"),
                        "elapsed": round(elapsed, 3), "gap": money(gap), "status": status,
-                       "subject": subject, "request": payload}) + "\n"
+                       "subject": subject, "client": client, "request": payload}) + "\n"
     try:
         pathlib.Path(path).parent.mkdir(parents=True, exist_ok=True)
         with open(path, "a") as f:
@@ -339,7 +358,8 @@ class OptimizeCharging(Resource):
                 response.call_on_close(log)
                 return response
 
-            dump_slow_request(data, elapsed, optimizer.cost_stage_gap, result.get('status'), g.get('subject'))
+            dump_slow_request(data, elapsed, optimizer.cost_stage_gap, result.get('status'), g.get('subject'),
+                              request.headers.get('User-Agent'))
             return result
 
         except Exception as e:

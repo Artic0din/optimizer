@@ -161,7 +161,7 @@ def test_requests_with_an_open_gap_are_dumped(tmp_path, monkeypatch):
 
 def test_infeasible_requests_are_dumped_with_their_subject(tmp_path, monkeypatch):
     # production sees a few installations send a contradictory model every 15 minutes; the dump
-    # names the account so the input can be fixed where it comes from
+    # names the account and the evcc release so the input can be fixed where it comes from
     request = json.loads(pathlib.Path('test_cases/009-discharge-before-import.json').read_text())["request"]
     request["batteries"][0]["s_initial"] = request["batteries"][0]["s_max"] + 1000   # more energy than the battery holds
     dump = tmp_path / "infeasible.jsonl"
@@ -170,13 +170,52 @@ def test_infeasible_requests_are_dumped_with_their_subject(tmp_path, monkeypatch
     token = jwt.encode({"sub": "someone"}, "test-secret", algorithm="HS256")
     client = app.test_client()
 
-    body = client.post("/optimize/charge-schedule", json=request, headers={"Authorization": f"Bearer {token}"}).json
+    body = client.post("/optimize/charge-schedule", json=request,
+                       headers={"Authorization": f"Bearer {token}", "User-Agent": "evcc/0.317.0"}).json
     assert body["status"] == "Infeasible"
 
     line = json.loads(dump.read_text())
     assert line["status"] == "Infeasible"
     assert line["subject"] == "someone"
+    assert line["client"] == "evcc/0.317.0"
     assert line["request"] == request
+
+
+def test_unsolved_requests_are_dumped(tmp_path, monkeypatch):
+    # a Not Solved burns the probe and cost stage caps and returns nothing, well short of the time
+    # limit; the dump is the only record of what was asked. The status is simulated rather than
+    # provoked, see test_unproved_solutions_report_feasible for why
+    original = pulp.LpProblem.solve
+
+    def stopped_without_incumbent(self, *args, **kwargs):
+        return dataclasses.replace(original(self, *args, **kwargs), status=pulp.LpSolveStatus.TimeLimit, has_solution=False)
+
+    request = json.loads(pathlib.Path('test_cases/009-discharge-before-import.json').read_text())["request"]
+    dump = tmp_path / "unsolved.jsonl"
+    monkeypatch.setattr(settings, "dump_slow_requests", str(dump))
+    monkeypatch.setattr(pulp.LpProblem, "solve", stopped_without_incumbent)
+    client = app.test_client()
+
+    body = client.post("/optimize/charge-schedule", json=request).json
+    assert body["status"] == "Not Solved"
+
+    line = json.loads(dump.read_text())
+    assert line["status"] == "Not Solved"
+    assert line["request"] == request
+
+
+def test_blocked_clients_are_refused_before_solving(capsys, monkeypatch):
+    request = json.loads(pathlib.Path('test_cases/009-discharge-before-import.json').read_text())["request"]
+    client = app.test_client()
+
+    response = client.post("/optimize/charge-schedule", json=request, headers={"User-Agent": "evcc/0.304.1"})
+    # 400 carries the message into evcc's log, which decodes the Error body for 400 and 500 only
+    assert response.status_code == 400
+    assert response.json["message"] == "evcc/0.304.1 is no longer served, please upgrade evcc"
+    assert '{"solve"' not in capsys.readouterr().out, "a refused request must not reach the solver"
+
+    monkeypatch.setattr(settings, "blocked_clients", "")
+    assert client.post("/optimize/charge-schedule", json=request, headers={"User-Agent": "evcc/0.304.1"}).status_code == 200
 
 
 def test_every_request_logs_a_solve_line(capsys):
