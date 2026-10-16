@@ -10,6 +10,7 @@ from flask import Flask, after_this_request, g, jsonify, request
 from flask_restx import Api, Resource, fields
 from werkzeug.exceptions import BadRequest
 
+from . import explain, feedback
 from .optimizer import CHARGING_STRATEGIES, DISCHARGING_STRATEGIES, BatteryConfig, GridConfig, OptimizationStrategy, Optimizer, TimeSeriesData
 from .settings import OptimizerSettings
 
@@ -374,6 +375,89 @@ class OptimizeCharging(Resource):
 
         except Exception as e:
             api.abort(500, f"Optimization failed: {str(e)}")
+
+
+explain_input_model = api.model('ExplainInput', {
+    'req': fields.Nested(optimization_input_model, required=True, description='The request the plan was computed from'),
+    'res': fields.Nested(optimization_result_model, required=True, description='The plan returned for it'),
+    'details': fields.Raw(required=False, description='Request details as evcc publishes them: timestamp per step, '
+                                                      'batteryDetails with title, type and capacity per battery'),
+    'currency': fields.String(required=False, description='Currency of the prices, EUR by default'),
+    'language': fields.String(required=False, description='Language of the explanation as an IETF tag such as de, en by default'),
+})
+
+explain_result_model = api.model('ExplainResult', {
+    'explanation': fields.String(description='Explanation of the plan, markdown'),
+})
+
+explain_feedback_model = api.inherit('ExplainFeedback', explain_input_model, {
+    'explanation': fields.String(required=True, description='The explanation as returned by /optimize/explain'),
+    'vote': fields.String(required=True, enum=['up', 'down'], description='Whether the explanation helped'),
+    'comment': fields.String(required=False, description='What was wrong or missing, optional'),
+})
+
+
+def plan_payload():
+    """The validated payload; the result model documents its fields but requires none of them."""
+    data = api.payload
+    for key in ('status', 'batteries'):
+        if key not in data['res']:
+            api.abort(400, f"res.{key} is a required property")
+    return data
+
+
+@ns.route('/explain')
+class ExplainPlan(Resource):
+    @api.expect(explain_input_model, validate=True)
+    @api.marshal_with(explain_result_model)
+    def post(self):
+        """
+        Explain an optimizer plan in plain language
+
+        Renders the plan as text and asks a chat model why it looks the way it does.
+        """
+        if not settings.azure_openai_endpoint or not settings.azure_openai_key:
+            api.abort(503, "Plan explanations are not configured")
+
+        data = plan_payload()
+
+        started = time.perf_counter()
+        try:
+            text, usage = explain.explain(data, settings)
+        except explain.ExplainError as e:
+            api.abort(502, str(e))
+
+        # one JSON line per request, so the model cost can be read against the client that caused it
+        print(json.dumps({"explain": {
+            "client": request.headers.get('User-Agent'),
+            "elapsed": round(time.perf_counter() - started, 3),
+            "steps": len(data['req']['time_series']['dt']),
+            "tokens": usage.get('total_tokens'),
+        }}), flush=True)
+
+        return {'explanation': text}
+
+
+@ns.route('/explain/feedback')
+class ExplainFeedback(Resource):
+    @api.expect(explain_feedback_model, validate=True)
+    def post(self):
+        """
+        Vote on an explanation
+
+        Stores the plan, the explanation it got and the thumbs up or down with an optional comment.
+        Nothing is stored until a user votes.
+        """
+        if not feedback.configured(settings):
+            api.abort(503, "Explanation feedback is not configured")
+
+        data = plan_payload()
+        try:
+            feedback.store(settings, data, explain.digest(data), explain.SYSTEM_PROMPT, g.get('subject'))
+        except Exception as e:
+            api.abort(502, f"feedback not stored: {str(e)[:200]}")
+
+        return {}
 
 
 @ns.route('/health')

@@ -28,6 +28,43 @@ resource logAnalytics 'Microsoft.OperationalInsights/workspaces@2025-02-01' = {
   }
 }
 
+// explanations and the votes on them, read by the prompt tuning skill. Table storage: one
+// entity per explanation, a few thousand a month, no server to run.
+resource feedbackStorage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
+  name: 'stoptimizerfeedback'
+  location: location
+  kind: 'StorageV2'
+  sku: {
+    name: 'Standard_LRS'
+  }
+  properties: {
+    minimumTlsVersion: 'TLS1_2'
+    allowBlobPublicAccess: false
+    supportsHttpsTrafficOnly: true
+  }
+}
+
+resource feedbackTables 'Microsoft.Storage/storageAccounts/tableServices@2023-05-01' = {
+  parent: feedbackStorage
+  name: 'default'
+}
+
+resource feedbackTable 'Microsoft.Storage/storageAccounts/tableServices/tables@2023-05-01' = {
+  parent: feedbackTables
+  name: 'explanations'
+}
+
+// Storage Table Data Contributor for the container app's managed identity
+resource feedbackWriter 'Microsoft.Authorization/roleAssignments@2022-04-01' = {
+  name: guid(feedbackStorage.id, containerApp.id, 'table-data-contributor')
+  scope: feedbackStorage
+  properties: {
+    roleDefinitionId: subscriptionResourceId('Microsoft.Authorization/roleDefinitions', '0a9a7e1f-b9d0-4cc4-a60d-0319b160aebd')
+    principalId: containerApp.identity.principalId
+    principalType: 'ServicePrincipal'
+  }
+}
+
 @description('Custom hostname served by the container app')
 param customHostname string = 'optimizer.evcc.io'
 
@@ -72,6 +109,11 @@ resource containerApp 'Microsoft.App/containerApps@2025-01-01' = {
         {
           name: 'jwt-token-secret'
           keyVaultUrl: '${keyVault.properties.vaultUri}secrets/jwt-token-secret'
+          identity: 'system'
+        }
+        {
+          name: 'azure-openai-key'
+          keyVaultUrl: '${keyVault.properties.vaultUri}secrets/azure-openai-key'
           identity: 'system'
         }
       ]
@@ -119,6 +161,11 @@ resource containerApp 'Microsoft.App/containerApps@2025-01-01' = {
               value: '--workers 1 --timeout 60 --max-requests 100 --max-requests-jitter 50 --config python:optimizer.gunicorn_conf --access-logfile - --access-logformat \'%(m)s %(U)s %(s)s %(D)s\''
             }
             { name: 'JWT_TOKEN_SECRET', secretRef: 'jwt-token-secret' }
+            // plan explanations, /optimize/explain
+            { name: 'OPTIMIZER_AZURE_OPENAI_ENDPOINT', value: 'https://evcc-ai-resource.cognitiveservices.azure.com/' }
+            { name: 'OPTIMIZER_AZURE_OPENAI_KEY', secretRef: 'azure-openai-key' }
+            // explanations and votes, /optimize/explain/feedback, written with the managed identity
+            { name: 'OPTIMIZER_FEEDBACK_TABLE_ENDPOINT', value: feedbackStorage.properties.primaryEndpoints.table }
           ]
           probes: [
             {
