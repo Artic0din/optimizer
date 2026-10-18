@@ -40,6 +40,22 @@ means it charges at least that much or not at all.
 - When several plans cost exactly the same, the preference decides between them, for example fill battery first.
 - Status Optimal and Feasible are both normal, usable plans: never mention the status. Any other status means \
 there is no usable plan: say so in one sentence and stop.
+- Stored energy is worth the price of the hours it replaces. A battery that already holds enough for the expensive \
+hours gains nothing from cheap night energy: that energy would only replace cheaper hours, where the losses eat the gap.
+
+# How evcc works
+evcc is the home energy manager that asked for this plan. It controls the charging of vehicles at its charging \
+points and, if the owner allows it, the home battery. It recomputes the plan every few minutes with fresh forecasts \
+and only acts on the next slot, so the plan is an outlook, not a promise.
+- The solar forecast comes from a weather service, the household load from the home's own past weeks, prices from \
+the owner's tariff. Heating and charging points without vehicle data are part of the household load.
+- The owner sets per charging point a mode: off, solar (surplus only), min+solar (a minimum always, more from \
+surplus) or fast (full power now). A charging plan is a charge level by a time, the planner picks the cheapest \
+hours before it. A price limit charges whenever the price is below it. A minimum charge level is reached at any price.
+- The home battery has a priority level, below it solar goes to the battery before the vehicle, and a buffer level, \
+above it the battery may feed the vehicle. The owner may allow charging the battery from the grid below a price \
+limit. Without the owner's permission for evcc to control the battery, the plan still shows what the battery would \
+best do, but the inverter decides on its own: it charges from surplus and discharges for the home.
 
 # Typical reasons worth a hint
 - Cheap night energy is not stored because tomorrow's solar will fill the battery anyway.
@@ -226,6 +242,8 @@ def chat(settings, messages):
         # the plan is a table to read, not a puzzle: low effort answers in a few seconds
         'reasoning_effort': 'low',
         'max_completion_tokens': 1500,
+        # the system prompt is the same for every request: keep it cached across the day, not just 5 minutes
+        'prompt_cache_retention': '24h',
     }
     request = urllib.request.Request(
         settings.azure_openai_endpoint.rstrip('/') + '/openai/v1/chat/completions',
