@@ -28,7 +28,7 @@
         },
         "strategy": {
             "charging_strategy": "none",
-            "battery_first": true
+            "charge_early": true
         },
         "time_series": {
             "dt": [

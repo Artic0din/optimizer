@@ -241,7 +241,7 @@ components:
             - attenuate_demand_peaks: level the grid import profile, charging at partial power over several time steps instead of one peak
             - attenuate_feedin_peaks: level the grid export profile, charging to shave solar feed-in peaks
             - attenuate_grid_peaks: level both the grid import and the grid export profile
-        battery_first:
+        charge_early:
           type: boolean
           default: false
           description: |

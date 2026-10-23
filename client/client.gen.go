@@ -285,11 +285,11 @@ type OptimizationResultStatus string
 
 // OptimizerStrategy defines model for OptimizerStrategy.
 type OptimizerStrategy struct {
-	// BatteryFirst Fill the batteries as early as the rest of the model allows, holding the surplus back
+	// ChargeEarly Fill the batteries as early as the rest of the model allows, holding the surplus back
 	// from the grid until they have taken it. Orthogonal to charging_strategy, so it combines
 	// with any of them; where the two disagree, attenuation keeps priority and the profile
 	// being levelled is the one that survives.
-	BatteryFirst bool `json:"battery_first,omitempty"`
+	ChargeEarly bool `json:"charge_early,omitempty"`
 
 	// ChargingStrategy Selects what to shape about the grid profile, in situations where choices are cost neutral.
 	// - none (default): no profile shaping

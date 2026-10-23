@@ -22,7 +22,7 @@ class OptimizationStrategy:
     # charging_strategy, which says what to shape about the grid profile and not when to charge,
     # so it combines with any of them - including none, which is what asking for an early charge
     # and no profile shaping at all means.
-    battery_first: bool = False
+    charge_early: bool = False
 
 
 # charging strategies that level grid peaks, mapped to the metered sides they level.
@@ -354,7 +354,7 @@ class Optimizer:
         # grid sides leveled by the active peak attenuation strategy, empty for all other strategies
         self.peak_sides = PEAK_STRATEGY_SIDES.get(strategy.charging_strategy, ())
 
-        # weights battery_first fills the batteries early at: prc_e_early defers export, prc_n_early
+        # weights charge_early fills the batteries early at: prc_e_early defers export, prc_n_early
         # pulls import forward. Attenuation outranks earliness, so a leveled side stays four orders
         # below prc_p_peak. An unleveled export side takes the charge_before_export coefficient
         # this option replaced, (T - t) / T explains the factor T, the battery count is a latent
@@ -592,7 +592,7 @@ class Optimizer:
 
         # fill the batteries early. The peak says how high the grid profile may go, not when the
         # batteries fill, and under flat prices nothing else decides it either.
-        if self.strategy.battery_first:
+        if self.strategy.charge_early:
             for t in self.time_steps:
                 preference += - self.variables['e'][t] * self.prc_e_early * (self.T - t) / self.T
                 preference += - self.variables['n'][t] * self.prc_n_early * t / self.T
