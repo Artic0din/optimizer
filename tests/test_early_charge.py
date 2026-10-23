@@ -176,4 +176,3 @@ def test_the_option_combines_with_every_charging_strategy(charging_strategy):
 
     assert result['status'] == 'Optimal'
     assert sum(result['batteries'][0]['charging_power']) > 0
-

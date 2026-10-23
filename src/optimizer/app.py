@@ -164,7 +164,7 @@ strategy_model = api.model('OptimizationStrategy', {
     'discharging_strategy': fields.String(required=False, enum=list(DISCHARGING_STRATEGIES),
                                           description='Sets a strategy for discharging in situations where choices are cost neutral.'),
     'charge_early': fields.Boolean(required=False, description='Fill the batteries as early as possible. '
-                                    'Combines with any charging_strategy; attenuation keeps priority.')
+                                   'Combines with any charging_strategy; attenuation keeps priority.')
 })
 
 grid_model = api.model('GridConfig', {
