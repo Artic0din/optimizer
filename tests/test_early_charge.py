@@ -1,6 +1,6 @@
 import pytest
 
-from optimizer.optimizer import PEAK_STRATEGY_SIDES, BatteryConfig, GridConfig, OptimizationStrategy, Optimizer, TimeSeriesData
+from optimizer.optimizer import CHARGING_STRATEGIES, PEAK_STRATEGY_SIDES, BatteryConfig, GridConfig, OptimizationStrategy, Optimizer, TimeSeriesData
 
 # flat prices and a battery worth more than the feed-in revenue: filling it is the money answer,
 # when to fill it is not decided by money at all. Four steps of surplus, room for two of them.
@@ -11,40 +11,29 @@ P_E = 0.0001
 P_A = 0.0004
 
 
-def build(charging_strategy, battery_first=True):
-    return Optimizer(
-        strategy=OptimizationStrategy(charging_strategy=charging_strategy, discharging_strategy='none',
-                                      battery_first=battery_first),
-        grid=GridConfig(p_max_imp=None, p_max_exp=None, prc_p_exc_imp=None),
-        batteries=[BatteryConfig(charge_from_grid=False, discharge_to_grid=False,
-                                 s_capacity=10000, s_min=0, s_max=4000, s_initial=0,
-                                 c_min=0, c_max=SURPLUS, d_max=0, p_a=P_A)],
-        time_series=TimeSeriesData(dt=[3600] * STEPS, gt=[0] * STEPS, ft=[SURPLUS] * STEPS,
-                                   p_N=[P_N] * STEPS, p_E=[P_E] * STEPS),
-        eta_c=1.0, eta_d=1.0, M=1e6)
-
-
 # the import side needs a longer horizon than the export side to show anything: with exactly two
 # steps of room in four the schedule is pinned either way, and only a horizon with slack leaves the
 # timing of the import open at all
 GRID_STEPS = 8
 
 
-def build_grid_only(charging_strategy, battery_first=True):
-    """
-    No solar at all, so charging can only come from grid import and there is nothing to export.
-    prc_e_early cannot reach this case: e[t] is zero whatever the schedule does.
-    """
+def build(charging_strategy, battery_first=True, ft=(SURPLUS,) * STEPS, s_max=4000, charge_from_grid=False):
+    steps = len(ft)
     return Optimizer(
         strategy=OptimizationStrategy(charging_strategy=charging_strategy, discharging_strategy='none',
                                       battery_first=battery_first),
         grid=GridConfig(p_max_imp=None, p_max_exp=None, prc_p_exc_imp=None),
-        batteries=[BatteryConfig(charge_from_grid=True, discharge_to_grid=False,
-                                 s_capacity=10000, s_min=0, s_max=4000, s_initial=0,
+        batteries=[BatteryConfig(charge_from_grid=charge_from_grid, discharge_to_grid=False,
+                                 s_capacity=2.5 * s_max, s_min=0, s_max=s_max, s_initial=0,
                                  c_min=0, c_max=SURPLUS, d_max=0, p_a=P_A)],
-        time_series=TimeSeriesData(dt=[3600] * GRID_STEPS, gt=[0] * GRID_STEPS, ft=[0] * GRID_STEPS,
-                                   p_N=[P_N] * GRID_STEPS, p_E=[P_E] * GRID_STEPS),
+        time_series=TimeSeriesData(dt=[3600] * steps, gt=[0] * steps, ft=list(ft),
+                                   p_N=[P_N] * steps, p_E=[P_E] * steps),
         eta_c=1.0, eta_d=1.0, M=1e6)
+
+
+def build_grid_only(charging_strategy, battery_first=True):
+    """No solar, so charging comes from grid import only and prc_e_early cannot reach it."""
+    return build(charging_strategy, battery_first, ft=(0,) * GRID_STEPS, charge_from_grid=True)
 
 
 def build_mixed(charging_strategy, battery_first=True):
@@ -53,17 +42,8 @@ def build_mixed(charging_strategy, battery_first=True):
     two sides pull against each other, because charging the whole battery early needs import that
     a leveled import profile spreads out.
     """
-    return Optimizer(
-        strategy=OptimizationStrategy(charging_strategy=charging_strategy, discharging_strategy='none',
-                                      battery_first=battery_first),
-        grid=GridConfig(p_max_imp=None, p_max_exp=None, prc_p_exc_imp=None),
-        batteries=[BatteryConfig(charge_from_grid=True, discharge_to_grid=False,
-                                 s_capacity=20000, s_min=0, s_max=8000, s_initial=0,
-                                 c_min=0, c_max=SURPLUS, d_max=0, p_a=P_A)],
-        time_series=TimeSeriesData(dt=[3600] * GRID_STEPS, gt=[0] * GRID_STEPS,
-                                   ft=[SURPLUS, SURPLUS] + [0] * (GRID_STEPS - 2),
-                                   p_N=[P_N] * GRID_STEPS, p_E=[P_E] * GRID_STEPS),
-        eta_c=1.0, eta_d=1.0, M=1e6)
+    return build(charging_strategy, battery_first, ft=(SURPLUS, SURPLUS) + (0,) * (GRID_STEPS - 2),
+                 s_max=8000, charge_from_grid=True)
 
 
 def economics(result):
@@ -74,14 +54,14 @@ def economics(result):
             + battery['state_of_charge'][-1] * P_A)
 
 
-def test_a_leveled_import_profile_still_charges_before_it_exports():
+@pytest.mark.parametrize('charging_strategy', ['none', 'attenuate_demand_peaks'])
+def test_the_surplus_charges_before_it_exports(charging_strategy):
     """
-    The peak weights rate every schedule with the same maximum equally, and
-    nothing here draws from the grid at all, so attenuate_demand_peaks used to leave the whole
-    horizon open: the surplus went out first and the battery took the last two steps, the same
-    schedule no strategy at all returns. Grid shaping is not a reason to sit on an empty battery.
+    none plus the option is what charge_before_export meant. attenuate_demand_peaks rates every
+    schedule with the same maximum equally and nothing here draws from the grid, so without the
+    option the surplus went out first and the battery took the last two steps.
     """
-    result = build('attenuate_demand_peaks').solve()
+    result = build(charging_strategy).solve()
 
     assert result['status'] == 'Optimal'
     charging = result['batteries'][0]['charging_power']
@@ -103,11 +83,8 @@ def test_leveling_the_feed_in_side_keeps_the_last_word():
 
 def test_the_tie_break_stays_cost_neutral():
     """it only picks between schedules, it does not buy the early charge with money"""
-    values = {}
-    values['none'] = economics(build('none', battery_first=False).solve())
-    values['attenuate_demand_peaks'] = economics(build('attenuate_demand_peaks').solve())
-
-    assert values['attenuate_demand_peaks'] == pytest.approx(values['none'])
+    assert economics(build('attenuate_demand_peaks').solve()) == \
+        pytest.approx(economics(build('none', battery_first=False).solve()))
 
 
 def test_a_battery_charging_from_the_grid_fills_early_when_nothing_levels_the_import():
@@ -141,11 +118,8 @@ def test_leveling_the_demand_side_keeps_the_last_word():
 
 def test_the_import_side_tie_break_stays_cost_neutral():
     """same as the export side: it picks between schedules, it does not pay for the early charge"""
-    values = {}
-    values['none'] = economics(build_grid_only('none', battery_first=False).solve())
-    values['attenuate_feedin_peaks'] = economics(build_grid_only('attenuate_feedin_peaks').solve())
-
-    assert values['attenuate_feedin_peaks'] == pytest.approx(values['none'])
+    assert economics(build_grid_only('attenuate_feedin_peaks').solve()) == \
+        pytest.approx(economics(build_grid_only('none', battery_first=False).solve()))
 
 
 @pytest.mark.parametrize('charging_strategy', ['none', *PEAK_STRATEGY_SIDES])
@@ -190,32 +164,16 @@ def test_without_the_option_nothing_decides_when_the_battery_fills():
     its own says how high the grid profile may go and nothing about when to charge, so the schedule
     is free to sit on an empty battery again. Guards against the option being quietly implied.
     """
-    model = build('attenuate_demand_peaks', battery_first=False)
-
-    assert model.battery_first is False
-    charging = model.solve()['batteries'][0]['charging_power']
+    charging = build('attenuate_demand_peaks', battery_first=False).solve()['batteries'][0]['charging_power']
     # the surplus leaves first and the battery takes the tail, the schedule none returns
     assert charging[:2] == pytest.approx([0.0, 0.0])
 
 
-def test_the_option_combines_with_every_charging_strategy():
-    """
-    It is orthogonal, so none of the four values of charging_strategy can refuse it. none plus the
-    option is what the charge_before_export strategy used to be.
-    """
-    for charging_strategy in ('none', 'attenuate_demand_peaks',
-                              'attenuate_feedin_peaks', 'attenuate_grid_peaks'):
-        result = build(charging_strategy).solve()
-        assert result['status'] == 'Optimal', charging_strategy
-        charged = sum(result['batteries'][0]['charging_power'])
-        assert charged > 0, charging_strategy
-
-
-def test_no_profile_shaping_plus_the_option_fills_first():
-    """what charge_before_export meant, now spelled out as the two independent choices it was"""
-    result = build('none').solve()
+@pytest.mark.parametrize('charging_strategy', CHARGING_STRATEGIES)
+def test_the_option_combines_with_every_charging_strategy(charging_strategy):
+    """it is orthogonal, so no value of charging_strategy can refuse it"""
+    result = build(charging_strategy).solve()
 
     assert result['status'] == 'Optimal'
-    charging = result['batteries'][0]['charging_power']
-    assert charging[:2] == pytest.approx([SURPLUS, SURPLUS])
-    assert charging[2:] == pytest.approx([0.0, 0.0])
+    assert sum(result['batteries'][0]['charging_power']) > 0
+

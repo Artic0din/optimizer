@@ -354,38 +354,13 @@ class Optimizer:
         # grid sides leveled by the active peak attenuation strategy, empty for all other strategies
         self.peak_sides = PEAK_STRATEGY_SIDES.get(strategy.charging_strategy, ())
 
-        self.battery_first = strategy.battery_first
-
-        # weights battery_first fills the batteries early at, one per grid side: prc_e_early makes
-        # early export expensive so the surplus charges the battery before it leaves, prc_n_early
-        # does the same for a battery that has no surplus to hold back and charges from the grid.
-        #
-        # Filling sooner is not free on either side. A battery that is full by the first hour has
-        # no room left for the midday solar peak, so that peak leaves over the grid instead, and
-        # one filled at full power draws a taller import peak than one trickled. Attenuation
-        # therefore outranks battery_first: where the two want different things, the profile the
-        # request asked to level is the one that survives.
-        #
-        # - a side an attenuation strategy levels keeps its peak, so the weight stays four orders
-        #   below prc_p_peak and only picks between schedules the leveling rates equal
-        # - an export side nothing levels has no peak worth protecting, so earliness takes it outright
-        # - import always stays at the protected weight: pulling grid import forward buys a
-        #   different price, and a larger weight trades real money for it (0.37 ct on case 009)
-        #
-        # attenuate_feedin_peaks with battery_first therefore keeps its feed-in peak and fills at
-        # the rate leveling leaves it, while attenuate_demand_peaks fills at full rate and spends
-        # the feed-in peak nobody asked it to shave. attenuate_grid_peaks levels both and protects
-        # both, and battery_first on its own has neither peak to respect.
-        #
-        # The unprotected weight is the coefficient the charge_before_export strategy carried
-        # before it became this option, so that every schedule it used to return is unchanged: its
-        # term was e[t] * min_import_price * 2e-5 * (T - t) and the terms below carry (T - t) / T,
-        # which is where the factor T comes from. Eight of the stored cases move without it.
-        #
-        # The battery count is part of that coefficient because the strategy added its term inside
-        # a loop over the batteries while the term itself never referenced one, so a two battery
-        # request weighted it twice. That is preserved here to keep this a pure refactor; it is a
-        # latent bug and worth removing on its own, which will move those schedules.
+        # weights battery_first fills the batteries early at: prc_e_early defers export, prc_n_early
+        # pulls import forward. Attenuation outranks earliness, so a leveled side stays four orders
+        # below prc_p_peak. An unleveled export side takes the charge_before_export coefficient
+        # this option replaced, (T - t) / T explains the factor T, the battery count is a latent
+        # bug of that coefficient kept to leave its schedules unchanged. Import always stays at
+        # the tie break weight: pulling it forward buys a different price, a larger weight trades
+        # real money for it (0.37 ct on case 009).
         early_unprotected = self.min_import_price * 2e-5 * self.T * len(self.batteries)
         early_protected = self.penalty_base * 1e-7
         self.prc_e_early = early_protected if 'exp' in self.peak_sides else early_unprotected
@@ -615,14 +590,9 @@ class Optimizer:
         for side in self.peak_sides:
             preference += - self.variables[f'p_{side}_peak'] * self.prc_p_peak
 
-        # fill the batteries early. The peak says how high the grid profile may go, not when
-        # the batteries fill, and under flat commercials nothing else decides it either, so a
-        # levelled day would otherwise return a schedule as arbitrary as no strategy at all - the
-        # stored examples charged in the last third of the horizon. Deferring export holds the
-        # surplus back until the battery has taken it; penalizing late import pulls forward the
-        # charge of a battery that has no surplus to hold back. The weights carry the precedence
-        # against attenuation, see prc_e_early / prc_n_early.
-        if self.battery_first:
+        # fill the batteries early. The peak says how high the grid profile may go, not when the
+        # batteries fill, and under flat prices nothing else decides it either.
+        if self.strategy.battery_first:
             for t in self.time_steps:
                 preference += - self.variables['e'][t] * self.prc_e_early * (self.T - t) / self.T
                 preference += - self.variables['n'][t] * self.prc_n_early * t / self.T
