@@ -1,6 +1,6 @@
 import pytest
 
-from optimizer.optimizer import BatteryConfig, GridConfig, OptimizationStrategy, Optimizer, TimeSeriesData
+from optimizer.optimizer import PEAK_STRATEGY_SIDES, BatteryConfig, GridConfig, OptimizationStrategy, Optimizer, TimeSeriesData
 
 # flat prices and a battery worth more than the feed-in revenue: filling it is the money answer,
 # when to fill it is not decided by money at all. Four steps of surplus, room for two of them.
@@ -148,26 +148,22 @@ def test_the_import_side_tie_break_stays_cost_neutral():
     assert values['attenuate_feedin_peaks'] == pytest.approx(values['none'])
 
 
-@pytest.mark.parametrize('charging_strategy, leveled', [
-    ('attenuate_demand_peaks', {'imp'}),
-    ('attenuate_feedin_peaks', {'exp'}),
-    ('attenuate_grid_peaks', {'imp', 'exp'}),
-])
-def test_earliness_only_outbids_a_side_the_strategy_does_not_level(charging_strategy, leveled):
+@pytest.mark.parametrize('charging_strategy', ['none', *PEAK_STRATEGY_SIDES])
+def test_earliness_only_outbids_an_export_side_the_strategy_does_not_level(charging_strategy):
     """
-    Filling the battery sooner is not free on either grid side, so which of the two wins depends
-    on whether the strategy is protecting that side: a leveled side keeps its peak and the tie
-    break stays below the peak weight, an unleveled side has no peak worth protecting and
-    earliness takes it outright. This is the whole rule, pinned on the weights themselves because
-    the schedules it produces depend on the request.
+    Filling the battery sooner is not free on either grid side. A leveled export side keeps its
+    peak and the tie break stays below the peak weight, an unleveled one has no peak worth
+    protecting and earliness takes it outright. Import always stays at the tie break weight,
+    since pulling import forward buys a different price and a larger weight trades money for it.
+    Pinned on the weights themselves because the schedules depend on the request.
     """
     model = build(charging_strategy)
 
-    for side, weight in (('exp', model.prc_e_early), ('imp', model.prc_n_early)):
-        if side in leveled:
-            assert weight < model.prc_p_peak, f"{side} is leveled, earliness must not outbid it"
-        else:
-            assert weight > model.penalty_base * 1e-7, f"{side} is not leveled, earliness should take it"
+    assert model.prc_n_early < model.prc_p_peak, "import earliness must stay a tie break"
+    if 'exp' in model.peak_sides:
+        assert model.prc_e_early < model.prc_p_peak, "exp is leveled, earliness must not outbid it"
+    else:
+        assert model.prc_e_early > model.prc_n_early, "exp is not leveled, earliness should take it"
 
 
 def test_solar_fills_the_battery_at_once_while_a_leveled_import_stays_flat():

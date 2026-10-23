@@ -368,7 +368,9 @@ class Optimizer:
         #
         # - a side an attenuation strategy levels keeps its peak, so the weight stays four orders
         #   below prc_p_peak and only picks between schedules the leveling rates equal
-        # - a side nothing levels has no peak worth protecting, so earliness takes it outright
+        # - an export side nothing levels has no peak worth protecting, so earliness takes it outright
+        # - import always stays at the protected weight: pulling grid import forward buys a
+        #   different price, and a larger weight trades real money for it (0.37 ct on case 009)
         #
         # attenuate_feedin_peaks with battery_first therefore keeps its feed-in peak and fills at
         # the rate leveling leaves it, while attenuate_demand_peaks fills at full rate and spends
@@ -387,7 +389,7 @@ class Optimizer:
         early_unprotected = self.min_import_price * 2e-5 * self.T * len(self.batteries)
         early_protected = self.penalty_base * 1e-7
         self.prc_e_early = early_protected if 'exp' in self.peak_sides else early_unprotected
-        self.prc_n_early = early_protected if 'imp' in self.peak_sides else early_unprotected
+        self.prc_n_early = early_protected
 
     def create_model(self):
         """
