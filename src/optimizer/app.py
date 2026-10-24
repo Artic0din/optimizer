@@ -189,7 +189,9 @@ battery_config_model = api.model('BatteryConfig', {
 })
 
 time_series_model = api.model('TimeSeries', {
-    'dt': fields.List(fields.Float, required=True, description='duration in seconds for each time step (s)'),
+    # the example is what the Swagger UI on / prefills, one step like its other series. A zero length step divides by zero
+    'dt': fields.List(fields.Float(exclusiveMin=0), required=True, example=[3600],
+                      description='duration in seconds for each time step (s)'),
     'gt': fields.List(fields.Float, required=True, description='Required energy for home consumption at each time step (Wh)'),
     'ft': fields.List(fields.Float, required=True, description='Forecasted solar generation at each time step (Wh)'),
     'p_N': fields.List(fields.Float, required=True, description='Price per Wh taken from grid at each time step'),

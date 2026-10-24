@@ -470,13 +470,14 @@ class Optimizer:
             else:
                 self.variables['z_c'][i] = None
 
-        # Binary variable to lock charging against discharging
+        # Binary variable to lock charging against discharging. A battery that can do neither has
+        # nothing to lock, and a gate left in no row comes back from the solver without a value
         self.variables['z_cd'] = {}
         for i, bat in enumerate(self.batteries):
             self.variables['z_cd'][i] = [
                 self.problem.add_variable(f"z_cd_{i}_{t}", cat='Binary')
                 for t in self.time_steps
-            ]
+            ] if bat.c_max > 0 or bat.d_max > 0 else [0] * self.T
 
     def _setup_target_function(self):
         """

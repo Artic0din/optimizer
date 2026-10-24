@@ -110,6 +110,17 @@ def test_empty_time_series_is_rejected(payload):
     assert response.json['message'] == 'Time series must not be empty'
 
 
+@pytest.mark.parametrize('dt', [0, -900])
+def test_non_positive_step_names_the_field(payload, dt):
+    # a zero length step was a 500, division by zero converting the demand rate to energy
+    payload['time_series']['dt'][1] = dt
+
+    response = app.test_client().post('/optimize/charge-schedule', json=payload)
+
+    assert response.status_code == 400
+    assert list(response.json['details']) == ['time_series.dt.1']
+
+
 def test_client_version_is_logged(payload, capsys):
     payload['time_series']['p_N'] = [0.0003]
 

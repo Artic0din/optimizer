@@ -269,3 +269,53 @@ def test_abort_returns_json_message():
     assert response.status_code == 400
     assert response.json is not None
     assert "message" in response.json
+
+
+def swagger_example(schema, definitions):
+    """The request body the Swagger UI on / prefills: example or default, the first enum value, a type placeholder."""
+    ref = schema.get("$ref") or schema.get("allOf", [{}])[0].get("$ref")
+    if ref:
+        return swagger_example(definitions[ref.split("/")[-1]], definitions)
+    for key in ("example", "default"):
+        if key in schema:
+            return schema[key]
+    if "enum" in schema:
+        return schema["enum"][0]
+    if schema.get("type", "object") == "object":
+        return {name: swagger_example(prop, definitions) for name, prop in schema.get("properties", {}).items()}
+    if schema["type"] == "array":
+        return [swagger_example(schema.get("items", {}), definitions)]
+    return {"string": "string", "number": 0, "integer": 0, "boolean": True}[schema["type"]]
+
+
+def test_swagger_example_is_solved():
+    # whoever tries the API on / sends this first. It came back as a 500 for its zero length
+    # step, then as Not Solved for its battery that can neither charge nor discharge
+    client = app.test_client()
+    definitions = client.get("/swagger.json").json["definitions"]
+    request = swagger_example({"$ref": "#/definitions/OptimizationInput"}, definitions)
+
+    response = client.post("/optimize/charge-schedule", json=request)
+
+    assert response.status_code == 200
+    assert response.json["status"] == "Optimal"
+
+
+def test_battery_without_power_is_solved():
+    # evcc sends c_max and d_max 0 for a battery whose power limits read 0. Its charge
+    # discharge gate was left in no row, came back without a value and failed the feasibility check
+    request = {
+        "batteries": [
+            {"s_min": 0, "s_max": 10000, "s_initial": 5000, "c_min": 0, "c_max": 0, "d_max": 0, "p_a": 0.0001},
+            {"s_min": 0, "s_max": 50000, "s_initial": 0, "c_min": 0, "c_max": 11000, "d_max": 0, "p_a": 0.0003},
+        ],
+        "time_series": {
+            "dt": [3600, 3600], "gt": [1000, 1000], "ft": [0, 2000],
+            "p_N": [0.0003, 0.0003], "p_E": [0.0001, 0.0001],
+        },
+    }
+
+    response = app.test_client().post("/optimize/charge-schedule", json=request)
+
+    assert response.json["status"] == "Optimal"
+    assert response.json["batteries"][0]["state_of_charge"] == [5000, 5000]

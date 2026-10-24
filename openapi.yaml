@@ -376,6 +376,7 @@ components:
           items:
             type: integer
             minimum: 0
+            exclusiveMinimum: true
           description: Duration in seconds for each time step (s)
           example: [3600, 3600, 3600, 3600, 3600, 3600]
         gt:
