@@ -431,7 +431,7 @@ class ExplainPlan(Resource):
         try:
             text, usage = explain.explain(data, settings)
         except explain.ExplainError as e:
-            api.abort(502, str(e))
+            api.abort(e.status, str(e))
 
         # one JSON line per request, so the model cost can be read against the client that caused it
         print(json.dumps({"explain": {
@@ -459,7 +459,7 @@ class ExplainFeedback(Resource):
 
         data = plan_payload()
         try:
-            feedback.store(settings, data, explain.digest(data), explain.SYSTEM_PROMPT, g.get('subject'))
+            feedback.store(settings, data, explain.digest(data), explain.SYSTEM_PROMPT, g.get('subject'), explain.model(settings))
         except Exception as e:
             api.abort(502, f"feedback not stored: {str(e)[:200]}")
 

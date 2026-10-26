@@ -51,6 +51,10 @@ class OptimizerSettings(BaseSettings):
                                                         "/optimize/explain runs on the signed in ChatGPT plan when no Azure OpenAI resource is "
                                                         "configured. Unset disables it")
     chatgpt_model: str = Field(default="gpt-6.1-sol", description="Model the ChatGPT plan explains plans with")
+    chatgpt_daily_limit: int = Field(default=48, ge=0,
+                                     description="Plan explanations the ChatGPT plan answers per local day, failed ones included. "
+                                     "The explain endpoint has no caller check of its own without JWT_TOKEN_SECRET, so "
+                                     "this caps what anyone who reaches the service can spend. Zero removes the cap")
     admin_token: str | None = Field(default=None,
                                     description="Token the /chatgpt sign-in endpoints require in the X-Admin-Token header. Unset disables them")
     feedback_table_endpoint: str | None = Field(default=None,

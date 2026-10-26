@@ -87,3 +87,10 @@ def test_store_failure_is_502(voted, store, monkeypatch):
 
     assert response.status_code == 502
     assert 'table offline' in response.json['message']
+
+
+def test_feedback_records_the_model_that_answered(voted, store, monkeypatch):
+    monkeypatch.setattr(explain, 'model', lambda _settings: 'gpt-test-plan')
+
+    assert app.test_client().post('/optimize/explain/feedback', json=voted).status_code == 200
+    assert store.rows[0]['model'] == 'gpt-test-plan'

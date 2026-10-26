@@ -79,11 +79,14 @@ def _locked(settings):
 def _read(settings) -> dict:
     try:
         with open(settings.chatgpt_credentials) as f:
-            return json.load(f)
+            record = json.load(f)
     except FileNotFoundError:
         return {}
     except (OSError, ValueError) as e:
         raise ChatGPTError('ChatGPT credentials could not be read', 503) from e
+    if not isinstance(record, dict):
+        raise ChatGPTError('ChatGPT credentials could not be read', 503)
+    return record
 
 
 def _write(settings, record: dict) -> None:
@@ -154,6 +157,24 @@ def _identity(id_token: str, client_id: str, nonce: str | None) -> dict:
     if not claims.get('sub'):
         raise ChatGPTError('ChatGPT ID token rejected: no subject')
     return claims
+
+
+def today() -> str:
+    """The local date the daily limit counts on, in the container's TZ."""
+    return time.strftime('%Y-%m-%d')
+
+
+def _spend(settings) -> None:
+    """Count one explanation against the daily limit, before the request: a failed one still cost a request."""
+    limit = settings.chatgpt_daily_limit
+    if not limit:
+        return
+    with _locked(settings) as record:
+        usage = record.get('usage') if isinstance(record.get('usage'), dict) else {}
+        count = usage.get('count', 0) if usage.get('date') == today() else 0
+        if count >= limit:
+            raise ChatGPTError(f'The daily limit of {limit} ChatGPT explanations is reached', 429)
+        _write(settings, {**record, 'usage': {'date': today(), 'count': count + 1}})
 
 
 def status(settings) -> dict:
@@ -276,6 +297,7 @@ def respond(settings, instructions: str, text: str) -> tuple[str, dict]:
     """One Responses API call on the ChatGPT plan. Returns the text and the usage once the response completed."""
     body = {'model': settings.chatgpt_model, 'instructions': instructions, 'input': [{'role': 'user', 'content': text}],
             'reasoning': {'effort': 'low'}, 'store': False, 'stream': True}
+    _spend(settings)
     try:
         try:
             resp = _stream(access_token(settings), body)
