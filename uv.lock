@@ -1199,7 +1199,7 @@ dependencies = [
     { name = "pulp" },
     { name = "pydantic" },
     { name = "pydantic-settings" },
-    { name = "pyjwt" },
+    { name = "pyjwt", extra = ["crypto"] },
     { name = "tabulate" },
     { name = "werkzeug" },
 ]
@@ -1226,7 +1226,7 @@ requires-dist = [
     { name = "pulp", specifier = ">=4.0.1" },
     { name = "pydantic", specifier = ">=2.14.1" },
     { name = "pydantic-settings", specifier = ">=2.15.0" },
-    { name = "pyjwt", specifier = ">=2.15.1" },
+    { name = "pyjwt", extras = ["crypto"], specifier = ">=2.15.1" },
     { name = "tabulate" },
     { name = "werkzeug", specifier = ">=3.1.9" },
 ]

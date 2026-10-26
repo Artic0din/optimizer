@@ -1,4 +1,5 @@
 import fcntl
+import hmac
 import json
 import os
 import pathlib
@@ -10,7 +11,7 @@ from flask import Flask, after_this_request, g, jsonify, request
 from flask_restx import Api, Resource, fields
 from werkzeug.exceptions import BadRequest
 
-from . import explain, feedback
+from . import chatgpt, explain, feedback
 from .optimizer import CHARGING_STRATEGIES, DISCHARGING_STRATEGIES, BatteryConfig, GridConfig, OptimizationStrategy, Optimizer, TimeSeriesData
 from .settings import OptimizerSettings
 
@@ -418,8 +419,11 @@ class ExplainPlan(Resource):
 
         Renders the plan as text and asks a chat model why it looks the way it does.
         """
-        if not settings.azure_openai_endpoint or not settings.azure_openai_key:
-            api.abort(503, "Plan explanations are not configured")
+        try:
+            if not explain.configured(settings):
+                api.abort(503, "Plan explanations are not configured")
+        except chatgpt.ChatGPTError as e:
+            api.abort(e.status, str(e))
 
         data = plan_payload()
 
@@ -460,6 +464,83 @@ class ExplainFeedback(Resource):
             api.abort(502, f"feedback not stored: {str(e)[:200]}")
 
         return {}
+
+
+chatgpt_ns = api.namespace('chatgpt', description='Sign in with ChatGPT for plan explanations, for the operator')
+
+chatgpt_status_model = api.model('ChatGPTStatus', {
+    'connected': fields.Boolean(required=True, description='Whether a ChatGPT plan is signed in'),
+    'email': fields.String(description='Email of the signed in ChatGPT account'),
+    'expires_at': fields.Float(description='Unix time the current access token expires, it is renewed before'),
+    'warning': fields.String(description='Set when signing out could not confirm the session was revoked'),
+})
+
+chatgpt_login_model = api.model('ChatGPTLogin', {
+    'auth_url': fields.String(required=True, description='URL to open in a browser to sign in'),
+    'expires_at': fields.Float(required=True, description='Unix time the sign-in expires'),
+})
+
+chatgpt_callback_model = api.model('ChatGPTCallback', {
+    'url': fields.String(required=True, description='The http://127.0.0.1:1455/auth/callback URL the browser landed on, copied from '
+                                                    'its address bar'),
+})
+
+
+def chatgpt_admin(handler):
+    """Operator only: the admin token in X-Admin-Token, and the credentials file configured."""
+    def guarded(*args, **kwargs):
+        if not settings.admin_token or not chatgpt.configured(settings):
+            api.abort(404)
+        if not hmac.compare_digest(request.headers.get('X-Admin-Token', '').encode(), settings.admin_token.encode()):
+            api.abort(401, "Invalid admin token")
+        try:
+            return handler(*args, **kwargs)
+        except chatgpt.ChatGPTError as e:
+            api.abort(e.status, str(e))
+    guarded.__doc__ = handler.__doc__
+    return guarded
+
+
+@chatgpt_ns.route('/status')
+class ChatGPTStatus(Resource):
+    @chatgpt_ns.marshal_with(chatgpt_status_model)
+    @chatgpt_admin
+    def get(self):
+        """Whether a ChatGPT plan is signed in"""
+        return chatgpt.status(settings)
+
+
+@chatgpt_ns.route('/login')
+class ChatGPTLogin(Resource):
+    @chatgpt_ns.marshal_with(chatgpt_login_model)
+    @chatgpt_admin
+    def post(self):
+        """
+        Start Sign in with ChatGPT
+
+        Open the returned URL in a browser and approve. The browser then fails to load a
+        http://127.0.0.1:1455/auth/callback page: post that URL to /chatgpt/callback.
+        """
+        return chatgpt.start_login(settings)
+
+
+@chatgpt_ns.route('/callback')
+class ChatGPTCallback(Resource):
+    @chatgpt_ns.expect(chatgpt_callback_model, validate=True)
+    @chatgpt_ns.marshal_with(chatgpt_status_model)
+    @chatgpt_admin
+    def post(self):
+        """Complete Sign in with ChatGPT with the callback URL the browser landed on"""
+        return chatgpt.complete_login(settings, api.payload['url'])
+
+
+@chatgpt_ns.route('/logout')
+class ChatGPTLogout(Resource):
+    @chatgpt_ns.marshal_with(chatgpt_status_model)
+    @chatgpt_admin
+    def post(self):
+        """Revoke the ChatGPT session and forget its tokens"""
+        return chatgpt.logout(settings)
 
 
 @ns.route('/health')

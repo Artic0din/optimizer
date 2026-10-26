@@ -5,6 +5,8 @@ import urllib.error
 import urllib.request
 from datetime import datetime, timedelta
 
+from . import chatgpt
+
 # the prompt is not a request parameter: the service would be an open relay to the model otherwise
 SYSTEM_PROMPT = """You explain an energy plan computed by evcc to the owner of the home. They are not technical: write for a \
 neighbour, not an engineer. Explain what the plan does and why, in plain words.
@@ -284,6 +286,26 @@ def chat(settings, messages):
         raise ExplainError('model returned no answer') from e
 
 
+def azure(settings):
+    return bool(settings.azure_openai_endpoint and settings.azure_openai_key)
+
+
+def configured(settings):
+    """An Azure OpenAI resource, or a signed in ChatGPT plan. Raises ChatGPTError if its credentials cannot be read."""
+    return azure(settings) or chatgpt.connected(settings)
+
+
+def complete(settings, messages):
+    """The Azure deployment when one is configured, the ChatGPT plan when sign-in is set up."""
+    if azure(settings) or not chatgpt.configured(settings):
+        return chat(settings, messages)
+    system, user = messages
+    try:
+        return chatgpt.respond(settings, system['content'], user['content'])
+    except chatgpt.ChatGPTError as e:
+        raise ExplainError(str(e)) from e
+
+
 def explain(payload, settings):
     """Explain a plan in the payload's language. Returns the markdown text and the token usage."""
     language = payload.get('language') or 'en'
@@ -291,6 +313,6 @@ def explain(payload, settings):
         {'role': 'system', 'content': f'{SYSTEM_PROMPT}\nAnswer in the language with IETF tag {language}.'},
         {'role': 'user', 'content': f'Explain this plan.\n\n{digest(payload)}'},
     ]
-    text, usage = chat(settings, messages)
+    text, usage = complete(settings, messages)
     # the prompt forbids dashes, models still slip one in now and then
     return text.replace(' — ', ', ').replace('—', ', ').replace('–', '-'), usage

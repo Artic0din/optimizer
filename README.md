@@ -117,6 +117,26 @@ The response carries `status`, the `objective_value`, `grid_import` / `grid_expo
 
 Time steps do not have to be equally long: `dt` is given per step, so a schedule can be fine grained for the next hour and coarse for tomorrow.
 
+### Explanations on a ChatGPT plan
+
+A self-hosted service without an Azure OpenAI resource can explain plans on the operator's ChatGPT Plus or Pro plan through [Sign in with ChatGPT](https://developers.openai.com/siwc/token-sharing-open-source).
+Set `OPTIMIZER_CHATGPT_CREDENTIALS` to a file on a persistent volume and `OPTIMIZER_ADMIN_TOKEN` to a random secret; `OPTIMIZER_CHATGPT_MODEL` picks the model (`gpt-6.1-sol` by default).
+An Azure OpenAI resource, when configured, takes precedence.
+
+Sign in once:
+
+```sh
+H="X-Admin-Token: $OPTIMIZER_ADMIN_TOKEN"
+curl -s -X POST -H "$H" http://localhost:7050/chatgpt/login | jq -r .auth_url   # open it in a browser and approve
+# the browser then fails to load http://127.0.0.1:1455/auth/callback?...: copy that URL from the address bar
+curl -s -X POST -H "$H" -H 'Content-Type: application/json' -d '{"url":"<callback URL>"}' http://localhost:7050/chatgpt/callback
+```
+
+The sign-in expires after 10 minutes.
+The service renews the tokens itself and keeps the credentials file owner-only.
+`GET /chatgpt/status` shows the signed in account, `POST /chatgpt/logout` revokes the session.
+The `/chatgpt` endpoints answer 404 unless both settings are set.
+
 A small Go client for sending requests to a running service lives in [`cmd/client.go`](cmd/client.go); it prints the request, the resulting schedule and the objective value:
 
 ```sh
