@@ -46,6 +46,13 @@ class OptimizerSettings(BaseSettings):
                                                           "https://name.openai.azure.com/. Unset disables /optimize/explain")
     azure_openai_deployment: str = Field(default="gpt-6.1-sol", description="Deployment name of the chat model behind /optimize/explain")
     azure_openai_key: str | None = Field(default=None, description="API key of the Azure OpenAI resource")
+    chatgpt_credentials: str | None = Field(default=None,
+                                            description="File the Sign in with ChatGPT credentials are kept in, on a persistent volume. Set, "
+                                                        "/optimize/explain runs on the signed in ChatGPT plan when no Azure OpenAI resource is "
+                                                        "configured. Unset disables it")
+    chatgpt_model: str = Field(default="gpt-6.1-sol", description="Model the ChatGPT plan explains plans with")
+    admin_token: str | None = Field(default=None,
+                                    description="Token the /chatgpt sign-in endpoints require in the X-Admin-Token header. Unset disables them")
     feedback_table_endpoint: str | None = Field(default=None,
                                                 description="Azure table service the explanations and the votes on them are stored in, "
                                                             "such as https://name.table.core.windows.net, accessed with the managed identity. "

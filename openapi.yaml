@@ -135,7 +135,8 @@ paths:
         as a text table, one row per step, and handed to a chat model together with a description of the
         optimization model.
 
-        The endpoint is only available where the service is configured with a chat model.
+        The endpoint is only available where the service is configured with a chat model: an Azure OpenAI
+        resource, or a ChatGPT plan signed in through /chatgpt/login.
       requestBody:
         required: true
         content:
@@ -206,6 +207,181 @@ paths:
               schema:
                 $ref: "#/components/schemas/Error"
 
+  /chatgpt/status:
+    get:
+      tags:
+        - chatgpt
+      summary: ChatGPT sign-in status
+      description: |
+        Whether a ChatGPT plan is signed in for plan explanations.
+        Requires the admin token in X-Admin-Token. Not found unless the service is configured with an admin
+        token and a credentials file.
+      security:
+        - AdminToken: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatGPTStatus"
+        "401":
+          description: Admin token missing or wrong
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Sign in with ChatGPT is not configured on this service
+        "502":
+          description: ChatGPT could not be reached or answered unexpectedly
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: The ChatGPT connection or its credentials file is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /chatgpt/login:
+    post:
+      tags:
+        - chatgpt
+      summary: Start Sign in with ChatGPT
+      description: |
+        Returns the URL to open in a browser. After approval the browser lands on a
+        http://127.0.0.1:1455/auth/callback page that fails to load: post that URL to /chatgpt/callback.
+        Requires the admin token in X-Admin-Token. Not found unless the service is configured with an admin
+        token and a credentials file.
+      security:
+        - AdminToken: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatGPTLogin"
+        "401":
+          description: Admin token missing or wrong
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Sign in with ChatGPT is not configured on this service
+        "502":
+          description: ChatGPT could not be reached or answered unexpectedly
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: The ChatGPT connection or its credentials file is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /chatgpt/callback:
+    post:
+      tags:
+        - chatgpt
+      summary: Complete Sign in with ChatGPT
+      description: |
+        Exchanges the code in the callback URL the browser landed on and stores the credentials.
+        Requires the admin token in X-Admin-Token. Not found unless the service is configured with an admin
+        token and a credentials file.
+      security:
+        - AdminToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatGPTCallback"
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatGPTStatus"
+        "400":
+          description: The callback does not belong to the pending sign-in, was declined or expired
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "403":
+          description: ChatGPT plan usage was not granted
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "401":
+          description: Admin token missing or wrong
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Sign in with ChatGPT is not configured on this service
+        "502":
+          description: ChatGPT could not be reached or answered unexpectedly
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: The ChatGPT connection or its credentials file is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /chatgpt/logout:
+    post:
+      tags:
+        - chatgpt
+      summary: Sign out of ChatGPT
+      description: |
+        Revokes the ChatGPT session and forgets its tokens. The registration is kept for the next sign-in.
+        Requires the admin token in X-Admin-Token. Not found unless the service is configured with an admin
+        token and a credentials file.
+      security:
+        - AdminToken: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatGPTStatus"
+        "401":
+          description: Admin token missing or wrong
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: Sign in with ChatGPT is not configured on this service
+        "502":
+          description: ChatGPT could not be reached or answered unexpectedly
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: The ChatGPT connection or its credentials file is unavailable
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
   /optimize/health:
     get:
       tags:
@@ -228,6 +404,12 @@ paths:
                     example: "EV Charging MILP API is running"
 
 components:
+  securitySchemes:
+    AdminToken:
+      type: apiKey
+      in: header
+      name: X-Admin-Token
+      description: The admin token the service is configured with
   schemas:
     OptimizerStrategy:
       type: object
@@ -624,6 +806,42 @@ components:
               type: string
               description: What was wrong or missing, optional
 
+    ChatGPTStatus:
+      type: object
+      required: [connected]
+      properties:
+        connected:
+          type: boolean
+          description: Whether a ChatGPT plan is signed in
+        email:
+          type: string
+          nullable: true
+          description: Email of the signed in ChatGPT account
+        expires_at:
+          type: number
+          nullable: true
+          description: Unix time the current access token expires, it is renewed before
+        warning:
+          type: string
+          nullable: true
+          description: Set when signing out could not confirm the session was revoked
+    ChatGPTLogin:
+      type: object
+      required: [auth_url, expires_at]
+      properties:
+        auth_url:
+          type: string
+          description: URL to open in a browser to sign in
+        expires_at:
+          type: number
+          description: Unix time the sign-in expires
+    ChatGPTCallback:
+      type: object
+      required: [url]
+      properties:
+        url:
+          type: string
+          description: The http://127.0.0.1:1455/auth/callback URL the browser landed on, copied from its address bar
     Error:
       type: object
       properties:
@@ -647,6 +865,8 @@ tags:
     description: Service health monitoring
   - name: examples
     description: Example data for testing
+  - name: chatgpt
+    description: Sign in with ChatGPT for plan explanations, for the operator
 
 externalDocs:
   description: Learn more about MILP optimization
