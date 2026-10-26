@@ -1219,6 +1219,7 @@ type PostOptimizeExplainResponse struct {
 	HTTPResponse *http.Response
 	JSON200      *ExplainResult
 	JSON400      *Error
+	JSON429      *Error
 	JSON502      *Error
 	JSON503      *Error
 }
@@ -1685,6 +1686,13 @@ func ParsePostOptimizeExplainResponse(rsp *http.Response) (*PostOptimizeExplainR
 			return nil, err
 		}
 		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest Error
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
 
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 502:
 		var dest Error

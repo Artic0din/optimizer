@@ -133,6 +133,8 @@ curl -s -X POST -H "$H" -H 'Content-Type: application/json' -d '{"url":"<callbac
 ```
 
 The sign-in expires after 10 minutes.
+`/optimize/explain` itself checks no caller unless `JWT_TOKEN_SECRET` is set, so keep the service off untrusted networks: anyone who reaches it spends the plan.
+`OPTIMIZER_CHATGPT_DAILY_LIMIT` caps explanations per local day, 48 by default, failed ones included; 0 removes the cap.
 The service renews the tokens itself and keeps the credentials file owner-only.
 `GET /chatgpt/status` shows the signed in account, `POST /chatgpt/logout` revokes the session.
 The `/chatgpt` endpoints answer 404 unless both settings are set.

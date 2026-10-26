@@ -108,6 +108,10 @@ CHAT_TIMEOUT = 45  # seconds, below the gunicorn request timeout
 class ExplainError(Exception):
     """The model could not be asked."""
 
+    def __init__(self, message, status=502):
+        super().__init__(message)
+        self.status = status
+
 
 def at(series, i, default=0):
     return series[i] if series and i < len(series) else default
@@ -295,6 +299,13 @@ def configured(settings):
     return azure(settings) or chatgpt.connected(settings)
 
 
+def model(settings):
+    """The model that answers: the Azure deployment, or the ChatGPT plan's model once signed in."""
+    if azure(settings) or not chatgpt.connected(settings):
+        return settings.azure_openai_deployment
+    return settings.chatgpt_model
+
+
 def complete(settings, messages):
     """The Azure deployment when one is configured, the ChatGPT plan when sign-in is set up."""
     if azure(settings) or not chatgpt.configured(settings):
@@ -303,7 +314,7 @@ def complete(settings, messages):
     try:
         return chatgpt.respond(settings, system['content'], user['content'])
     except chatgpt.ChatGPTError as e:
-        raise ExplainError(str(e)) from e
+        raise ExplainError(str(e), 429 if e.status == 429 else 502) from e
 
 
 def explain(payload, settings):

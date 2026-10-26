@@ -414,3 +414,53 @@ def test_explain_after_sign_out_elsewhere_is_an_error_not_a_crash(openai, payloa
 
     assert response.status_code == 502
     assert 'Sign in with ChatGPT first' in response.json['message']
+
+
+@pytest.mark.parametrize('content', ['[]', '"text"', '42', 'null'])
+def test_credentials_that_are_not_an_object_are_503(openai, payload, content):
+    with open(settings.chatgpt_credentials, 'w') as f:
+        f.write(content)
+
+    assert app.test_client().post('/optimize/explain', json=payload).status_code == 503
+    assert app.test_client().get('/chatgpt/status', headers={'X-Admin-Token': ADMIN}).status_code == 503
+
+
+def test_daily_limit_caps_plan_explanations(openai, payload, monkeypatch):
+    sign_in(openai)
+    monkeypatch.setattr(settings, 'chatgpt_daily_limit', 2)
+    client = app.test_client()
+
+    assert [client.post('/optimize/explain', json=payload).status_code for _ in range(3)] == [200, 200, 429]
+    assert len([c for c in openai.calls if c[1] == '/responses']) == 2
+
+
+def test_daily_limit_resets_the_next_day(openai, payload, monkeypatch):
+    sign_in(openai)
+    monkeypatch.setattr(settings, 'chatgpt_daily_limit', 1)
+    client = app.test_client()
+    monkeypatch.setattr(chatgpt, 'today', lambda: '2026-10-26')
+    assert [client.post('/optimize/explain', json=payload).status_code for _ in range(2)] == [200, 429]
+
+    monkeypatch.setattr(chatgpt, 'today', lambda: '2026-10-27')
+    assert client.post('/optimize/explain', json=payload).status_code == 200
+
+
+def test_no_daily_limit_when_zero(openai, payload, monkeypatch):
+    sign_in(openai)
+    monkeypatch.setattr(settings, 'chatgpt_daily_limit', 0)
+    client = app.test_client()
+
+    assert {client.post('/optimize/explain', json=payload).status_code for _ in range(3)} == {200}
+
+
+def test_model_names_the_provider_that_answers(openai, monkeypatch):
+    monkeypatch.setattr(settings, 'chatgpt_model', 'gpt-test-plan')
+    monkeypatch.setattr(settings, 'azure_openai_deployment', 'azure-deployment')
+    assert explain.model(settings) == 'azure-deployment'  # not signed in yet
+
+    sign_in(openai)
+    assert explain.model(settings) == 'gpt-test-plan'
+
+    monkeypatch.setattr(settings, 'azure_openai_endpoint', 'https://example.invalid/')
+    monkeypatch.setattr(settings, 'azure_openai_key', 'test-key')
+    assert explain.model(settings) == 'azure-deployment'

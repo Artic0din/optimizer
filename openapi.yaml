@@ -156,6 +156,12 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+        "429":
+          description: The daily limit of explanations on the ChatGPT plan is reached
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
         "502":
           description: The chat model could not be asked
           content:

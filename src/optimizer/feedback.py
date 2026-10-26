@@ -68,9 +68,10 @@ def features(payload):
     }
 
 
-def store(settings, payload, digest, prompt, subject=None):
+def store(settings, payload, digest, prompt, subject=None, model=None):
     """Store a vote with the explanation it was given on. payload is the explain payload plus
-    explanation, vote and comment."""
+    explanation, vote and comment. model names what answered, the Azure deployment by default."""
+    model = model or settings.azure_openai_deployment
     now = datetime.now(timezone.utc)
     entity = {
         'PartitionKey': f'{now:%Y-%m}',
@@ -78,7 +79,7 @@ def store(settings, payload, digest, prompt, subject=None):
         'created': now,
         'language': payload.get('language') or 'en',
         'promptHash': prompt_hash(prompt),
-        'model': settings.azure_openai_deployment,
+        'model': model,
         'answer': payload['explanation'],
         'vote': payload['vote'],
         'comment': (payload.get('comment') or '')[:4000],
